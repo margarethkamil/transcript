@@ -1,13 +1,17 @@
-Welcome to the speech.
-To the speech recognition test.
-In this case I'm using the base model, mine.
-So, my name is Margaret and today I will show you a real-time transcription tool.
-This tool is uses whisper AI as speech detects text model in Python it listens to.
-Listen to live audio, write down what is said instantly. and uses voice activity detection to?
-To make the transcription more accurate.
-The goal is to show how well it can transcribe its write a speech in real time with fewer mistakes.
-This is the process.
-Take in consideration. that I'm not a native speaker, right?
-Right? Please.
-Nice bye.
-СТУК.
+Thanks for watching!
+Welcome to the speech recognition Test.
+Welcome to the speech recognition test.
+Test My name is Margaret and today.
+And today I will show you a real-time transcription tool.
+Tool. this tool uses whisper.
+Whisper AI as speech-to-text mo- model in python it listens to life out.
+Audio, write down what it says instantly.
+Consistently and uses voice activity. The activity detection made the transcription more accurate.
+Accurate. The goal is to show how well it can transcribe its speech in real?
+Real time with fewer mistakes.
+Take into consideration that I'm.
+I'm not a nativist beaker So this might go wrong.
+You know I'm not a nativist.
+If it's because I didn't say that I said not if a speaker.
+Gore.
+Native speaker.

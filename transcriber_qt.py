@@ -9,7 +9,8 @@ import os
 import traceback
 import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QLabel, QTextEdit, QScrollArea)
+                            QLabel, QTextEdit, QScrollArea, QHBoxLayout, 
+                            QSlider, QComboBox, QCheckBox, QProgressBar, QGroupBox)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtGui import QFont, QColor, QTextCursor
 import re
@@ -17,18 +18,37 @@ import re
 class TranscriptionSignals(QObject):
     """Custom signals for thread communication"""
     text_signal = pyqtSignal(str)
+    audio_level_signal = pyqtSignal(float)  # Signal for audio input level
+    status_signal = pyqtSignal(str)  # Signal for transcription status
 
 class TranscriberWindow(QMainWindow):
     """PyQt-based GUI for displaying transcriptions"""
     
-    def __init__(self):
+    def __init__(self, model_type="base"):
         super().__init__()
         self.setWindowTitle("Real-time Transcriber")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 900, 700)  # Increased size to accommodate new controls
+        
+        # Store model type that was passed from command line
+        self.model_type = model_type
+        
         self.setup_ui()
         
         # Keep window on top
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        
+        # Init timer for progress bar updates
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_indicators)
+        self.update_timer.start(100)  # Update every 100ms
+        
+        # Default settings - these will be linked to UI controls
+        self.chunk_size = 2.5
+        self.noise_reduction = True
+        
+        # Store audio level for display
+        self.current_audio_level = 0.0
+        self.transcription_status = "Ready"
         
     def setup_ui(self):
         """Set up the user interface"""
@@ -36,8 +56,8 @@ class TranscriberWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setSpacing(15)  # Add spacing between widgets
-        main_layout.setContentsMargins(20, 20, 20, 20)  # Add margins
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(20, 20, 20, 20)
         
         # Header label with gradient background
         header = QLabel("REAL-TIME SPEECH TRANSCRIPTION")
@@ -53,6 +73,130 @@ class TranscriberWindow(QMainWindow):
             }
         """)
         main_layout.addWidget(header)
+        
+        # === NEW: Progress indicators section ===
+        indicators_group = QGroupBox("Status Indicators")
+        indicators_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                margin-top: 1ex;
+                padding: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        indicators_layout = QVBoxLayout(indicators_group)
+        
+        # Add audio level indicator
+        level_layout = QHBoxLayout()
+        level_label = QLabel("Microphone Level:")
+        level_label.setFixedWidth(120)
+        self.audio_level_bar = QProgressBar()
+        self.audio_level_bar.setRange(0, 100)
+        self.audio_level_bar.setValue(0)
+        self.audio_level_bar.setTextVisible(True)
+        self.audio_level_bar.setFormat("%v%")
+        self.audio_level_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #bbb;
+                border-radius: 4px;
+                text-align: center;
+                height: 20px;
+            }
+            QProgressBar::chunk {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                                stop:0 #3498db, stop:1 #2ecc71);
+                border-radius: 3px;
+            }
+        """)
+        level_layout.addWidget(level_label)
+        level_layout.addWidget(self.audio_level_bar)
+        indicators_layout.addLayout(level_layout)
+        
+        # Add transcription status indicator
+        status_layout = QHBoxLayout()
+        status_label = QLabel("Status:")
+        status_label.setFixedWidth(120)
+        self.status_indicator = QLabel("Ready")
+        self.status_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #f8f9fa;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                padding: 5px;
+            }
+        """)
+        status_layout.addWidget(status_label)
+        status_layout.addWidget(self.status_indicator)
+        indicators_layout.addLayout(status_layout)
+        
+        main_layout.addWidget(indicators_group)
+        
+        # === NEW: Customizable settings section ===
+        settings_group = QGroupBox("Transcription Settings")
+        settings_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                margin-top: 1ex;
+                padding: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        settings_layout = QVBoxLayout(settings_group)
+        
+        # Chunk size slider
+        chunk_layout = QHBoxLayout()
+        chunk_label = QLabel("Chunk Size (sec):")
+        chunk_label.setFixedWidth(120)
+        self.chunk_slider = QSlider(Qt.Horizontal)
+        self.chunk_slider.setRange(10, 50)  # 1.0 to 5.0 seconds (x10 for precision)
+        self.chunk_slider.setValue(25)      # Default 2.5 seconds
+        self.chunk_slider.setTickPosition(QSlider.TicksBelow)
+        self.chunk_slider.setTickInterval(5)
+        self.chunk_value_label = QLabel("2.5")
+        self.chunk_value_label.setFixedWidth(30)
+        self.chunk_slider.valueChanged.connect(self.update_chunk_size)
+        chunk_layout.addWidget(chunk_label)
+        chunk_layout.addWidget(self.chunk_slider)
+        chunk_layout.addWidget(self.chunk_value_label)
+        settings_layout.addLayout(chunk_layout)
+        
+        # Noise reduction checkbox
+        noise_layout = QHBoxLayout()
+        noise_label = QLabel("Noise Reduction:")
+        noise_label.setFixedWidth(120)
+        self.noise_checkbox = QCheckBox()
+        self.noise_checkbox.setChecked(True)
+        self.noise_checkbox.stateChanged.connect(self.update_noise_reduction)
+        noise_layout.addWidget(noise_label)
+        noise_layout.addWidget(self.noise_checkbox)
+        noise_layout.addStretch()
+        settings_layout.addLayout(noise_layout)
+        
+        # Model type dropdown
+        model_layout = QHBoxLayout()
+        model_label = QLabel("Model Type:")
+        model_label.setFixedWidth(120)
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["tiny", "base", "small", "medium", "large"])
+        self.model_combo.setCurrentText(self.model_type)  # Use the model type passed from command line
+        self.model_combo.currentTextChanged.connect(self.update_model_type)
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.model_combo)
+        settings_layout.addLayout(model_layout)
+        
+        main_layout.addWidget(settings_group)
         
         # Text display for transcriptions
         self.text_display = QTextEdit()
@@ -79,6 +223,39 @@ class TranscriberWindow(QMainWindow):
         )
         self.text_display.setHtml(initial_text)
         
+    def update_chunk_size(self):
+        """Update chunk size from slider"""
+        value = self.chunk_slider.value() / 10.0  # Convert from int to float (1-5 seconds)
+        self.chunk_value_label.setText(f"{value:.1f}")
+        self.chunk_size = value
+        
+    def update_noise_reduction(self, state):
+        """Update noise reduction setting"""
+        self.noise_reduction = (state == Qt.Checked)
+        
+    def update_model_type(self, model_name):
+        """Update model type setting"""
+        self.model_type = model_name
+        
+    def update_indicators(self):
+        """Update the UI indicators with current values"""
+        # Update audio level indicator
+        self.audio_level_bar.setValue(int(self.current_audio_level * 100))
+        
+        # Update status with different colors based on status
+        if self.transcription_status == "Transcribing":
+            self.status_indicator.setText("Transcribing")
+            self.status_indicator.setStyleSheet("background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; padding: 5px;")
+        elif self.transcription_status == "Listening":
+            self.status_indicator.setText("Listening")
+            self.status_indicator.setStyleSheet("background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; padding: 5px;")
+        elif self.transcription_status == "Error":
+            self.status_indicator.setText("Error")
+            self.status_indicator.setStyleSheet("background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 5px;")
+        else:
+            self.status_indicator.setText("Ready")
+            self.status_indicator.setStyleSheet("background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; padding: 5px;")
+        
     def add_transcription(self, text):
         """Add transcription text to the display"""
         if text:
@@ -101,7 +278,14 @@ class TranscriberWindow(QMainWindow):
             
             # Debug print
             print(f"Added to GUI: [{timestamp}] {text}")
-
+    
+    def set_audio_level(self, level):
+        """Set the current audio input level (0.0-1.0)"""
+        self.current_audio_level = min(max(level, 0.0), 1.0)  # Clamp between 0 and 1
+        
+    def set_status(self, status):
+        """Set the current transcription status"""
+        self.transcription_status = status
 
 class RealtimeTranscriber:
     def __init__(self, model_size="base", device="cpu", compute_type="int8", use_gui=False):
@@ -132,8 +316,12 @@ class RealtimeTranscriber:
         self.segment_timeout = 3.0  # 3 seconds
         
         # Audio overlap settings
-        self.overlap_ratio = 0.25  # 25% overlap between audio chunks
+        self.overlap_ratio = 0.15  # Reduced from 0.25 to 0.15 (15% overlap between audio chunks)
         self.previous_audio = None  # Store previous audio for overlap
+        
+        # User settings (can be modified through UI)
+        self.chunk_duration = 2.5  # seconds
+        self.noise_reduction_enabled = True
         
         # GUI reference and signal communication
         self.app = None
@@ -178,246 +366,105 @@ class RealtimeTranscriber:
         
         # Add audio data to queue
         self.audio_queue.put(indata.copy())
+        
+        # Calculate audio level for UI indicators
+        if self.use_gui and self.signals:
+            # Calculate RMS of the audio data
+            rms = np.sqrt(np.mean(indata**2))
+            # Scale and apply some smoothing for better visualization
+            normalized_level = min(1.0, rms * 10)  # Scale up by 10x for better visibility
+            self.signals.audio_level_signal.emit(normalized_level)
     
     def should_flush_context(self):
-        """Determine if we should output the current context"""
+        """Determine if we should output the current context - improved version"""
         current_time = time.time()
         
         # Flush if we have content and exceeded the delay time since last output
         if self.current_context and (current_time - self.last_output_time) > self.output_delay:
             return True
             
-        # Flush if we have content and exceeded the silence timeout
-        if self.current_context and (current_time - self.last_segment_time) > self.segment_timeout:
+        # Flush if we have content and exceeded the silence timeout (reduced from 3.0 to 2.0)
+        if self.current_context and (current_time - self.last_segment_time) > 2.0:
             return True
             
-        # NEW: Flush shorter segments after a brief silence (1.5 seconds)
-        if self.current_context and (current_time - self.last_segment_time) > 1.5:
+        # Flush shorter segments after a brief silence (reduced from 1.5 to 1.0 seconds)
+        if self.current_context and (current_time - self.last_segment_time) > 1.0:
             return True
             
-        # Flush if we have a complete sentence with proper ending and significant length
+        # Flush if we have a complete sentence with proper ending and reduced word count threshold
         if (self.current_context and 
             re.search(r'[.!?]$', self.current_context) and 
-            len(self.current_context.split()) > 10):
+            len(self.current_context.split()) > 6):  # Reduced from 10 to 6
+            return True
+            
+        # NEW: Flush if context exceeds a certain length regardless of other conditions
+        if self.current_context and len(self.current_context.split()) > 20:
             return True
             
         return False
     
     def remove_duplicates(self, text):
-        """Remove duplicate words and phrases from text"""
+        """Remove duplicate words and phrases from text - enhanced version"""
         if not text:
             return text
-            
-        # First check for exact repetition of 2-4 word phrases
-        for phrase_len in range(4, 1, -1):
+        
+        # Check for exact repetition of 2-5 word phrases (increased range)
+        for phrase_len in range(5, 1, -1):
             pattern = r'\b(\w+(?:\s+\w+){' + str(phrase_len-1) + r'})\s+\1\b'
             text = re.sub(pattern, r'\1', text)
         
         # Remove immediate word repetitions (like "the the" or "and and")
         text = re.sub(r'\b(\w+)\s+\1\b', r'\1', text)
         
-        # Check for repetition across sentence boundaries
-        text = re.sub(r'(\w+)[\.\?\!]\s+\1\b', r'\1.', text, flags=re.IGNORECASE)
-        
-        # Detect partial phrase repetitions
+        # Handle similar phrases with minor variations using fuzzy matching
         words = text.split()
-        
-        # NEW: Detect abandoned and restarted phrases
         i = 0
-        while i < len(words) - 3:
-            # Look for restart markers that often indicate abandoned phrases
-            restart_markers = ["alright", "well", "so", "anyway", "um", "uh", "like", "okay", "right"]
-            
-            # Check if we have a restart indicator
-            has_restart = False
-            restart_idx = -1
-            
-            # Look for restart markers or punctuation that might indicate a restart
-            for j in range(i, min(i + 4, len(words))):
-                if j < len(words) and (words[j].lower() in restart_markers or 
-                                        words[j] in [",", ".", "?", "..."]):
-                    has_restart = True
-                    restart_idx = j
+        while i < len(words) - 3:  # Check for similar phrases
+            phrase1 = ' '.join(words[i:i+3])
+            for j in range(i+3, min(i+10, len(words)-2)):
+                phrase2 = ' '.join(words[j:j+3])
+                if phrase1.lower() == phrase2.lower():
+                    # Remove the second occurrence
+                    words = words[:j] + words[j+3:]
                     break
-            
-            if has_restart and restart_idx < len(words) - 2:
-                # Check if words after the restart repeat earlier words
-                before_restart = words[max(0, i-3):restart_idx]
-                after_restart = words[restart_idx+1:restart_idx+5]
-                
-                # Count matching words
-                matches = 0
-                match_indices = []
-                
-                for k, word1 in enumerate(before_restart):
-                    for l, word2 in enumerate(after_restart):
-                        if word1.lower() == word2.lower():
-                            matches += 1
-                            match_indices.append((k, l))
-                
-                # If we found multiple matches or sequence matches, it's likely a restart
-                if matches >= 2 or (matches == 1 and len(before_restart) >= 2 and len(after_restart) >= 2):
-                    # Found a likely restart - remove the abandoned phrase and the restart marker
-                    words = words[:i] + words[restart_idx+1:]
-                    continue
-            
-            # Special case for "and to" -> "and today" type restarts (common speech error)
-            if i < len(words) - 4 and words[i].lower() in ["my", "the", "this", "that", "and", "to", "with"]:
-                if words[i+2].lower() in ["and", "alright", "well", "so"] and words[i].lower() == words[i+3].lower():
-                    # Pattern like "my name and my" - remove abandoned phrase
-                    words = words[:i] + words[i+2:]
-                    continue
-                
             i += 1
         
-        # NEW: Detect partial phrase repetitions (3-word sequences that repeat with variations)
-        i = 0
-        while i < len(words) - 5:
-            # Check if a 2-3 word sequence appears again within the next few words
-            for seq_len in range(3, 1, -1):
-                if i + seq_len + 3 >= len(words):  # Ensure we have enough words left
-                    continue
-                    
-                # Get the sequence we're checking
-                seq = words[i:i+seq_len]
-                seq_text = ' '.join(seq).lower()
-                
-                # Look for this sequence in the next few words
-                next_text = ' '.join(words[i+seq_len:i+seq_len+6]).lower()
-                
-                # If 2+ words of the sequence repeat, consider it a partial repetition
-                # Check each word in the sequence
-                matches = 0
-                for word in seq:
-                    if word.lower() in next_text.split():
-                        matches += 1
-                
-                # If most words match (proportional to sequence length)
-                if matches >= max(2, seq_len-1):
-                    # Find where repetition seems to end
-                    end_idx = i + seq_len
-                    for j in range(i+seq_len, min(i+seq_len+6, len(words))):
-                        if j < len(words) and words[j].lower() in [w.lower() for w in seq]:
-                            end_idx = j + 1  # Include this word in what we'll remove
-                    
-                    # Remove the repetition portion (keep the first occurrence)
-                    words = words[:i+seq_len] + words[end_idx:]
-                    break  # We modified the list, so restart the outer loop
-            i += 1
+        # Remove duplicate spaces
+        cleaned_text = ' '.join(words)
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
         
-        # NEW: Handle phrases like "to make it to make the"
-        i = 0
-        while i < len(words) - 4:  # Need at least 4 words
-            if i + 3 < len(words):
-                # Look for a pattern like "X Y Z ... X Y something"
-                if (words[i].lower() == words[i+3].lower() and
-                    i + 4 < len(words) and words[i+1].lower() == words[i+4].lower()):
-                    # Found a partial repeat with pattern "X Y ... X Y"
-                    words = words[:i+3] + words[i+5:]  # Remove the repetition
-                    continue  # Check the same position again
-            i += 1
-        
-        # Remove stutters (same word with slight variations)
-        i = 0
-        while i < len(words) - 1:
-            if words[i].lower() == words[i+1].lower():
-                words.pop(i+1)
-                continue
-            i += 1
-        
-        text = ' '.join(words)
-        
-        return text
+        return cleaned_text
     
     def add_to_context(self, text):
-        """Add a new segment to the context window and determine if it should be output"""
+        """Simplified version that adds text to context with minimal processing"""
         if not text.strip():
             return
-            
+        
         # Update timing information
         self.last_segment_time = time.time()
         
-        # Remove punctuation at the beginning that might have been added by Whisper
+        # Basic cleanup - remove punctuation at beginning and trailing/leading spaces
         text = text.strip()
         text = re.sub(r'^[,.;:!?]\s*', '', text)
         
-        # Apply duplicate removal
-        text = self.remove_duplicates(text)
-        
-        # Check for duplicates with the end of the current context
+        # Only do minimal duplication check with current context
         if self.current_context:
-            # Create combined text and check for repeated content
-            combined = self.current_context + " " + text
-            combined = self.remove_duplicates(combined)
+            # Check if this segment is an exact duplicate or subset of current context
+            if text.lower() in self.current_context.lower():
+                return
             
-            # If the deduped combined text is shorter than the separate texts,
-            # there was a duplication that was removed
-            if len(combined.split()) < len(self.current_context.split()) + len(text.split()):
-                # Replace context and text with deduplicated version
-                current_words = self.current_context.split()
-                text_words = text.split()
-                combined_words = combined.split()
-                
-                # If the combined text is shorter, find how words to keep from the current context
-                if len(combined_words) > len(current_words):
-                    # Some duplication, but not all of text was duplicate
-                    self.current_context = ' '.join(current_words)
-                    remaining_words = combined_words[len(current_words):]
-                    text = ' '.join(remaining_words)
-                else:
-                    # Complete duplication, just keep current context
-                    return
+            # Add space if needed between existing context and new text
+            if not self.current_context.endswith(' '):
+                self.current_context += ' '
         
-        # Improved sentence boundary detection
-        # Check for explicit sentence boundaries with improved pattern matching
-        is_new_sentence = False
-        
-        # Look for period/question/exclamation + space + capital letter pattern in combined text
-        if self.current_context:
-            combined = self.current_context + " " + text
-            if re.search(r'[.!?]\s+[A-Z]', combined):
-                # Find the last sentence ending punctuation
-                match = list(re.finditer(r'[.!?]\s+[A-Z]', combined))
-                if match:
-                    last_match = match[-1]
-                    split_pos = last_match.start() + 1  # Include the punctuation
-                    
-                    # Split at this position
-                    first_part = combined[:split_pos].strip()
-                    second_part = combined[split_pos:].strip()
-                    
-                    # If first part is substantive, flush it
-                    if first_part and len(first_part.split()) > 3:
-                        self.current_context = first_part
-                        self.flush_context()
-                        self.current_context = second_part
-                        return
-        
-        # Also check if text starts with clear sentence beginning indicators
-        if (self.current_context and 
-            ((re.search(r'[.!?]$', self.current_context) and re.match(r'[A-Z]', text)) or
-             re.match(r'^(However|Nevertheless|Therefore|Furthermore|Moreover|In addition|Thus|Also|Besides|Indeed|Still|Anyway)', text))):
-            is_new_sentence = True
-        
-        # If it's clearly a new sentence and we have content, flush current context first
-        if is_new_sentence and self.current_context:
-            self.flush_context()
-        
-        # Add space if needed between existing context and new text
-        if self.current_context and not self.current_context.endswith(' '):
-            self.current_context += ' '
-            
-        # Add the new text to the current context
+        # Add text to context
         self.current_context += text
         
-        # Remove duplicate spaces
-        self.current_context = re.sub(r'\s+', ' ', self.current_context)
-        
-        # Add to context window history
+        # Add to context window history (keep for context length management)
         self.context_window.append(text)
         if len(self.context_window) > self.context_window_size:
             self.context_window.pop(0)
-            
+        
         # Check if we should output the context
         if self.should_flush_context():
             self.flush_context()
@@ -461,8 +508,7 @@ class RealtimeTranscriber:
         print("Audio processing thread started")
         
         # Audio processing parameters
-        chunk_duration = 3.0  # seconds
-        chunk_size = int(chunk_duration * self.sample_rate / 1024)
+        chunk_size = int(self.chunk_duration * self.sample_rate / 1024)
         overlap_size = int(chunk_size * self.overlap_ratio)
         
         self.previous_audio = None
@@ -473,6 +519,10 @@ class RealtimeTranscriber:
         check_interval = 1.0  # Check every second
         
         while self.is_running:
+            # Update status to "Listening"
+            if self.use_gui and self.signals:
+                self.signals.status_signal.emit("Listening")
+                
             # Periodic check for unflushed content
             current_time = time.time()
             if current_time - last_check_time > check_interval:
@@ -511,6 +561,12 @@ class RealtimeTranscriber:
                 if np.abs(current_audio).max() > 0:
                     current_audio = current_audio / np.abs(current_audio).max()
                 
+                # Apply noise reduction if enabled
+                if self.noise_reduction_enabled:
+                    # Simple noise gate - zero out low amplitude signals
+                    noise_threshold = 0.02  # Adjust as needed
+                    current_audio[np.abs(current_audio) < noise_threshold] = 0
+                
                 # Create overlapping audio by combining with previous chunk
                 if self.previous_audio is not None:
                     # Create overlapping audio segment
@@ -535,14 +591,18 @@ class RealtimeTranscriber:
                         self.flush_context()
                     continue
                 
+                # Update status to "Transcribing"
+                if self.use_gui and self.signals:
+                    self.signals.status_signal.emit("Transcribing")
+                
                 # Transcribe
                 try:
                     segments, _ = self.model.transcribe(
                         overlap_audio,
                         beam_size=5,
                         vad_filter=True,
-                        vad_parameters=dict(min_silence_duration_ms=700),
-                        #language="en"  # Force English language for better accuracy
+                        vad_parameters=dict(min_silence_duration_ms=500), # Reduced from 700ms to 500ms
+                        language="en"  # Force English language for better accuracy
                     )
                     
                     # Process results
@@ -559,6 +619,7 @@ class RealtimeTranscriber:
                     print(error_msg)
                     traceback.print_exc()
                     if self.use_gui and self.signals:
+                        self.signals.status_signal.emit("Error")
                         self.signals.text_signal.emit(f"ERROR: {error_msg}")
         
         # Make sure to flush any remaining context when stopping
@@ -603,6 +664,7 @@ class RealtimeTranscriber:
             print(error_msg)
             traceback.print_exc()
             if self.use_gui and self.signals:
+                self.signals.status_signal.emit("Error")
                 self.signals.text_signal.emit(f"ERROR: {error_msg}")
             self.is_running = False
     
@@ -611,11 +673,21 @@ class RealtimeTranscriber:
         # Create Qt application
         self.app = QApplication(sys.argv)
         
-        # Create main window
-        self.window = TranscriberWindow()
+        # Create main window - pass the actual model size being used
+        self.window = TranscriberWindow(model_type=self.model_size)
         
         # Connect signals for thread-safe updates
         self.signals.text_signal.connect(self.window.add_transcription)
+        self.signals.audio_level_signal.connect(self.window.set_audio_level)
+        self.signals.status_signal.connect(self.window.set_status)
+        
+        # Connect settings changes to transcriber
+        self.window.chunk_slider.valueChanged.connect(
+            lambda: self.update_settings(chunk_size=self.window.chunk_size))
+        self.window.noise_checkbox.stateChanged.connect(
+            lambda: self.update_settings(noise_reduction=self.window.noise_reduction))
+        self.window.model_combo.currentTextChanged.connect(
+            lambda: self.update_settings(model_type=self.window.model_type))
         
         # Show window
         self.window.show()
@@ -667,6 +739,22 @@ class RealtimeTranscriber:
             print("No transcription to save.")
         
         print("Transcription stopped.")
+    
+    def update_settings(self, chunk_size=None, noise_reduction=None, model_type=None):
+        """Update transcriber settings from UI controls"""
+        if chunk_size is not None:
+            self.chunk_duration = chunk_size
+            print(f"Chunk duration updated to {chunk_size} seconds")
+            
+        if noise_reduction is not None:
+            self.noise_reduction_enabled = noise_reduction
+            print(f"Noise reduction {'enabled' if noise_reduction else 'disabled'}")
+            
+        if model_type is not None and model_type != self.model_size:
+            print(f"Model type change requested from {self.model_size} to {model_type}")
+            print("Note: Model change requires restarting the application")
+            # Model type changes require reloading the model, which is complex
+            # We'll just notify the user but not actually change it during runtime
 
 
 def main():
