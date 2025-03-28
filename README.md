@@ -10,12 +10,13 @@ This is a Python tool for real-time audio transcription using OpenAI's Whisper m
 - Automatic transcript saving
 - Silence detection to reduce processing load
 - Voice Activity Detection (VAD) to improve accuracy
+- GUI interface for easier transcript viewing (NEW!)
 
 ## Installation
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/transcript.git
+   git clone https://github.com/margarethkamil/transcript.git
    cd transcript
    ```
 
@@ -34,13 +35,15 @@ This is a Python tool for real-time audio transcription using OpenAI's Whisper m
 
 ## Usage
 
+### Command-line Version
+
 Run the transcriber with default settings (base model, CPU):
 
 ```bash
 python transcriber.py
 ```
 
-### Command-line Arguments
+Command-line arguments:
 
 - `--model`: Whisper model size (tiny, base, small, medium, large)
 - `--device`: Device to run inference on (cpu, cuda)
@@ -52,11 +55,21 @@ Example with a different model:
 python transcriber.py --model tiny --device cpu
 ```
 
-If you have a GPU, you can use it for faster transcription:
+### GUI Version (Recommended)
+
+For a graphical interface that displays the transcript in real-time:
 
 ```bash
-python transcriber.py --model small --device cuda --compute_type float16
+python transcriber_gui.py
 ```
+
+The GUI version offers:
+- Real-time transcript display in a scrollable window
+- Model selection via dropdown menus
+- Start/stop recording buttons
+- Save transcript functionality
+- Clear transcript button
+- Status bar for tracking application state
 
 ## Model Size Comparison
 
@@ -73,8 +86,9 @@ Smaller models are faster but less accurate, while larger models are more accura
 ## Using the Output
 
 The transcriptions are:
-1. Printed to the console in real-time
-2. Saved to `transcript.txt` when you stop the program (Ctrl+C)
+1. Displayed in the GUI window in real-time (GUI version)
+2. Printed to the console in real-time (command-line version)
+3. Saved to a file when you click "Save Transcript" (GUI version) or when you stop the program with Ctrl+C (command-line version)
 
 ## Troubleshooting
 
