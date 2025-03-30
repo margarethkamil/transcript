@@ -1,17 +1,17 @@
-Thanks for watching!
-Welcome to the speech recognition Test.
-Welcome to the speech recognition test.
-Test My name is Margaret and today.
-And today I will show you a real-time transcription tool.
-Tool. this tool uses whisper.
-Whisper AI as speech-to-text mo- model in python it listens to life out.
-Audio, write down what it says instantly.
-Consistently and uses voice activity. The activity detection made the transcription more accurate.
-Accurate. The goal is to show how well it can transcribe its speech in real?
-Real time with fewer mistakes.
-Take into consideration that I'm.
-I'm not a nativist beaker So this might go wrong.
-You know I'm not a nativist.
-If it's because I didn't say that I said not if a speaker.
-Gore.
-Native speaker.
+Yeah.
+Yeah Bellalines.
+LLMs are advanced AI models. AI models trained on massive amounts of technology.
+Of text data to the to understand, and generate human- language.
+They use deep. Use deep learning, specifically.
+Transformer architecture to predict engine.
+And generate text based on input. Input prompts.
+Key features. Issues of LLM's contact. Context, understanding, multi-mol.
+Multimodal capabilities, fine turning. Scaling.
+Prop. Popular LLMs are GPT-4, GPT-3.
+3.5 Germany Cloud in Lama.
+Thank you.
+Ha Thank you.
+Hi, thank you.
+He shoots off all the.
+, contact, contact.
+That's it. Multi-mode, capability, and fun.

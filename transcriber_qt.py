@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtGui import QFont, QColor, QTextCursor
 import re
+import difflib
+from collections import Counter
 
 class TranscriptionSignals(QObject):
     """Custom signals for thread communication"""
@@ -404,36 +406,163 @@ class RealtimeTranscriber:
         return False
     
     def remove_duplicates(self, text):
-        """Remove duplicate words and phrases from text - enhanced version"""
+        """Enhanced duplicate removal with better fuzzy matching"""
         if not text:
             return text
         
-        # Check for exact repetition of 2-5 word phrases (increased range)
+        # First handle exact duplicates of phrases
         for phrase_len in range(5, 1, -1):
             pattern = r'\b(\w+(?:\s+\w+){' + str(phrase_len-1) + r'})\s+\1\b'
             text = re.sub(pattern, r'\1', text)
         
-        # Remove immediate word repetitions (like "the the" or "and and")
+        # Handle single word duplicates
         text = re.sub(r'\b(\w+)\s+\1\b', r'\1', text)
         
-        # Handle similar phrases with minor variations using fuzzy matching
+        # Process for fuzzy matching
         words = text.split()
         i = 0
-        while i < len(words) - 3:  # Check for similar phrases
-            phrase1 = ' '.join(words[i:i+3])
-            for j in range(i+3, min(i+10, len(words)-2)):
-                phrase2 = ' '.join(words[j:j+3])
-                if phrase1.lower() == phrase2.lower():
-                    # Remove the second occurrence
-                    words = words[:j] + words[j+3:]
+        
+        # Better fuzzy matching with adaptive comparison
+        while i < len(words) - 2:  # Need at least 3 words for a meaningful phrase
+            if i + 3 > len(words):
+                break
+                
+            # Get current phrase (2-3 words)
+            phrase_len = min(3, len(words) - i)
+            current_phrase = ' '.join(words[i:i+phrase_len]).lower()
+            
+            # Look ahead for similar phrases
+            max_look_ahead = min(15, len(words) - i - phrase_len)  # Limit look-ahead distance
+            
+            for j in range(i + phrase_len, i + phrase_len + max_look_ahead):
+                if j + phrase_len > len(words):
                     break
+                    
+                compare_phrase = ' '.join(words[j:j+phrase_len]).lower()
+                
+                # Use sequence matcher for fuzzy comparison
+                similarity = difflib.SequenceMatcher(None, current_phrase, compare_phrase).ratio()
+                
+                # If high similarity, remove the later occurrence
+                if similarity > 0.75:  # Threshold for "similar enough"
+                    # Remove the duplicate segment
+                    words = words[:j] + words[j+phrase_len:]
+                    continue
+            
             i += 1
         
-        # Remove duplicate spaces
-        cleaned_text = ' '.join(words)
-        cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
+        # Reassemble and clean up
+        text = ' '.join(words)
+        text = re.sub(r'\s+', ' ', text).strip()
         
-        return cleaned_text
+        return text
+    
+    def post_process_transcription(self, text):
+        """Apply generalized post-processing to improve transcription quality"""
+        if not text:
+            return text
+            
+        # First apply duplicate removal (includes fuzzy matching)
+        text = self.remove_duplicates(text)
+        
+        # Apply generic orthographic corrections
+        text = self._apply_orthographic_corrections(text)
+        
+        # Fix speech pattern artifacts
+        text = self._fix_speech_patterns(text)
+        
+        # Improve sentence structure
+        text = self._improve_sentence_structure(text)
+        
+        # Ensure proper capitalization
+        if text and text[0].islower():
+            text = text[0].upper() + text[1:]
+            
+        # Ensure proper sentence ending
+        if text and not re.search(r'[.!?]$', text):
+            if re.search(r'\b(who|what|where|when|why|how|which)\b', text.lower()):
+                text += '?'
+            else:
+                text += '.'
+                
+        return text
+    
+    def _apply_orthographic_corrections(self, text):
+        """Apply general orthographic corrections to common speech-to-text errors"""
+        # Common orthographic patterns in speech-to-text systems
+        corrections = [
+            # Fix spacing around punctuation
+            (r'\s+([.,;:!?])', r'\1'),
+            
+            # Fix repeated punctuation
+            (r'([.,;:!?]){2,}', r'\1'),
+            
+            # Fix capitalization after sentence endings
+            (r'([.!?]\s+)([a-z])', lambda m: m.group(1) + m.group(2).upper()),
+            
+            # Ensure "I" is always capitalized
+            (r'\b(i)(\s+|\'|$)', lambda m: 'I' + m.group(2)),
+            
+            # Fix common article errors
+            (r'\b(a)\s+([aeiou][a-z]+)', r'an \2'),
+            (r'\b(an)\s+([bcdfghjklmnpqrstvwxyz][a-z]+)', r'a \2'),
+            
+            # Fix double articles
+            (r'\b(a|an|the)\s+(a|an|the)\b', r'\1'),
+            
+            # Common contractions
+            (r'\b(cant)\b', r"can't"),
+            (r'\b(dont)\b', r"don't"),
+            (r'\b(wont)\b', r"won't"),
+            (r'\b(im)\b', r"I'm"),
+            (r'\b(youre)\b', r"you're"),
+            (r'\b(theyre)\b', r"they're"),
+        ]
+        
+        # Apply all corrections
+        for pattern, replacement in corrections:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+            
+        return text
+    
+    def _fix_speech_patterns(self, text):
+        """Clean up common speech patterns and hesitations"""
+        # Remove filler words and hesitations
+        fillers = [
+            r'\b(um+|uh+|er+|ah+)\b',
+            r'\b(like|you know|i mean)\b(?! (to|that|the|a|an|how|what))',
+            r'\b(so+)\b(?! (that|much|many|far|good|bad|well|it|i|we|they))',
+            r'\b(basically|literally|actually)\b(?! (is|are|was|were|have|had|will|would|could|should))'
+        ]
+        
+        for filler in fillers:
+            text = re.sub(filler, '', text, flags=re.IGNORECASE)
+            
+        # Fix repeated words (beyond what remove_duplicates catches)
+        text = re.sub(r'\b(\w+)(\s+\1){1,}\b', r'\1', text, flags=re.IGNORECASE)
+        
+        # Clean up extra spaces
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text
+    
+    def _improve_sentence_structure(self, text):
+        """Improve sentence structure with generic rules"""
+        # Fix sentence fragments
+        if len(text.split()) <= 3 and not re.search(r'[.!?]$', text):
+            # Too short to be a complete sentence, likely a fragment
+            return text  # Keep as is, will be merged with next segment
+            
+        # Improve punctuation for lists
+        text = re.sub(r'(\w+)( \w+)? and (\w+)', r'\1\2, and \3', text)
+        
+        # Balance parentheses, quotes, etc.
+        if text.count('(') > text.count(')'):
+            text += ')'
+        if text.count('"') % 2 != 0:
+            text += '"'
+            
+        return text
     
     def add_to_context(self, text):
         """Simplified version that adds text to context with minimal processing"""
@@ -470,38 +599,92 @@ class RealtimeTranscriber:
             self.flush_context()
     
     def flush_context(self):
-        """Output the current context and reset"""
+        """Output the current context and reset with improved context management"""
         if not self.current_context:
             return
             
-        # Final check for any duplicates before output
-        self.current_context = self.remove_duplicates(self.current_context)
+        # First apply basic processing to current context
+        processed_text = self.post_process_transcription(self.current_context)
         
-        # Capitalize the first letter of the context if needed
-        if self.current_context and self.current_context[0].islower():
-            self.current_context = self.current_context[0].upper() + self.current_context[1:]
-        
-        # Ensure the context ends with proper punctuation
-        if not re.search(r'[.!?]$', self.current_context):
-            # Choose appropriate punctuation based on content
-            if re.search(r'\b(who|what|where|when|why|how|which)\b', self.current_context.lower()):
-                self.current_context += '?'
-            else:
-                self.current_context += '.'
+        # Context continuity check
+        if self.transcription_buffer:
+            previous_text = self.transcription_buffer[-1]
             
-        # Add to final transcription buffer
-        self.transcription_buffer.append(self.current_context)
+            # Check for potential sentence continuation
+            if self._appears_to_continue(previous_text, processed_text):
+                # Merge with previous segment
+                merged_text = self._merge_segments(previous_text, processed_text)
+                self.transcription_buffer[-1] = merged_text
+                
+                # Update GUI/output with merged text
+                if self.use_gui and self.signals:
+                    self.signals.text_signal.emit(merged_text)
+                else:
+                    timestamp = time.strftime("%H:%M:%S")
+                    print(f"[{timestamp}] {merged_text}")
+                
+                self.current_context = ""
+                self.last_output_time = time.time()
+                return
+        
+        # Standard processing for new segments
+        self.transcription_buffer.append(processed_text)
         
         # Update GUI if available
         if self.use_gui and self.signals:
-            self.signals.text_signal.emit(self.current_context)
+            self.signals.text_signal.emit(processed_text)
         else:
             timestamp = time.strftime("%H:%M:%S")
-            print(f"[{timestamp}] {self.current_context}")
+            print(f"[{timestamp}] {processed_text}")
             
         # Reset context
         self.current_context = ""
         self.last_output_time = time.time()
+    
+    def _appears_to_continue(self, previous, current):
+        """Determine if current segment likely continues the previous one"""
+        # If previous ends with sentence-ending punctuation, likely not continuing
+        if re.search(r'[.!?]$', previous):
+            return False
+            
+        # If current starts with lowercase and no sentence markers, likely continuing
+        if current and current[0].islower() and not re.match(r'^(however|but|and|or|so|yet|therefore|thus|moreover|furthermore)', current.lower()):
+            return True
+            
+        # Check for partial sentences in previous segment
+        prev_words = len(previous.split())
+        if prev_words < 5 and not re.search(r'[.!?]$', previous):
+            return True
+            
+        return False
+    
+    def _merge_segments(self, previous, current):
+        """Intelligently merge two text segments"""
+        # Remove redundant words between segments
+        prev_words = previous.split()
+        curr_words = current.split()
+        
+        # Check for overlapping consecutive words (2-3 word overlap)
+        overlap_len = 0
+        for i in range(1, 4):  # Check for overlaps of 1-3 words
+            if len(prev_words) >= i and len(curr_words) >= i:
+                prev_end = ' '.join(prev_words[-i:]).lower()
+                curr_start = ' '.join(curr_words[:i]).lower()
+                if prev_end == curr_start:
+                    overlap_len = i
+                    break
+        
+        # If we found overlap, remove duplicate words
+        if overlap_len > 0:
+            merged = previous + ' ' + ' '.join(curr_words[overlap_len:])
+        else:
+            # Ensure proper spacing
+            if previous.endswith(('.', ',', '?', '!', ':', ';')):
+                merged = previous + ' ' + current
+            else:
+                merged = previous + ' ' + current
+                
+        return merged
     
     def process_audio(self):
         """Process audio chunks and perform transcription"""
